@@ -1,0 +1,36 @@
+# Python 생성 파일
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.spec
+
+# 가상 환경
+.venv
+venv/
+env/
+
+# 환경 변수 (보안 중요)
+.env
+.env.local
+.env.*
+
+# IDE 설정
+.vscode/
+.idea/
+
+# 로그 및 임시 파일
+*.log
+logs/
+tmp/
+temp/
+.pytest_cache/
+
+# 시스템 파일
+.DS_Store
+Thumbs.db
+
+# 대용량 모델 파일 (필요 시 주석 해제)
+models/*.onnx

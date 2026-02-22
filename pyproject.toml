@@ -1,0 +1,28 @@
+[project]
+name = "rapidocr-api-service"
+version = "0.1.0"
+description = "High-performance OCR REST API for document processing and structural analysis based on FastAPI and RapidOCR."
+readme = "README.md"
+authors = [
+    { name = "koolunkle", email = "a43361904@gmail.com" }
+]
+requires-python = ">=3.13"
+license = { text = "MIT" }
+keywords = ["OCR", "FastAPI", "RapidOCR", "Document-Processing", "Deep-Learning"]
+dependencies = [
+    "fastapi[standard]>=0.128.0",
+    "httpx>=0.28.1",
+    "numpy>=2.4.1",
+    "onnxruntime>=1.23.2",
+    "opencv-contrib-python>=4.13.0.90",
+    "pydantic-settings>=2.12.0",
+    "pytest>=9.0.2",
+    "python-multipart>=0.0.22",
+    "rapidocr>=3.5.0",
+    "uvicorn>=0.40.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
