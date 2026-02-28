@@ -1,25 +1,25 @@
 """
-시스템 공통 상수 및 텍스트 추출 패턴 정의
+프로젝트 전역에서 사용하는 상수와 패턴 정의
 """
 
 import re
 from enum import StrEnum
 
-# 허용 파일 확장자
-ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+# --- 시스템 설정 ---
+# 허용하는 이미지 확장자
+ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 
 class PageType(StrEnum):
-    """처리 결과 타입"""
+    """OCR 처리 결과 상태"""
+    RAW = "raw"                # 기본 텍스트 추출
+    STRUCTURED = "structured"  # 구조화 분석 완료
+    ERROR = "error"            # 처리 실패
 
-    RAW = "raw"
-    STRUCTURED = "structured"
-    ERROR = "error"
 
-
-class Keyword(StrEnum):
-    """문서 분석용 핵심 키워드"""
-
+# --- 문서 분석 키워드 ---
+class DocKeyword(StrEnum):
+    """문서 구조 분석을 위한 식별자"""
     ORG = "법원"
     ID = "사건"
     ATTR_A = "채권자"
@@ -30,24 +30,24 @@ class Keyword(StrEnum):
     DESC = "이유"
 
 
-# 파싱 우선 순위 목록
-STRUCTURED_PARSING_KEYS = [
-    Keyword.ID,
-    Keyword.ATTR_A,
-    Keyword.ATTR_B,
-    Keyword.ATTR_C,
-    Keyword.CONTENT_MAIN,
-    Keyword.VALUE,
-    Keyword.DESC,
+# 파싱 시 키워드를 찾는 순서
+PARSING_ORDER = [
+    DocKeyword.ID,
+    DocKeyword.ATTR_A,
+    DocKeyword.ATTR_B,
+    DocKeyword.ATTR_C,
+    DocKeyword.CONTENT_MAIN,
+    DocKeyword.VALUE,
+    DocKeyword.DESC,
 ]
 
-# 단일 텍스트 블록으로 병합할 키워드
-SIMPLE_TEXT_KEYS = {Keyword.ID, Keyword.VALUE, Keyword.DESC}
+# 단일 문장으로 취급할 항목 (줄바꿈 없이 병합)
+SINGLE_LINE_KEYS = {DocKeyword.ID, DocKeyword.VALUE, DocKeyword.DESC}
 
 
+# --- 데이터 처리 및 가공 ---
 class FieldKey(StrEnum):
-    """데이터 스키마 키"""
-
+    """내부 데이터 처리에 쓰이는 필드명"""
     TEXT = "text"
     BBOX = "bbox"
     Y_CENTER = "y_center"
@@ -57,32 +57,41 @@ class FieldKey(StrEnum):
     X_MAX = "x_max"
 
 
-class Tags(StrEnum):
-    """텍스트 가공용 태그"""
-
-    SPACE = "[SP]"
-    SPLIT = "[SPLIT]"
+class TextTag(StrEnum):
+    """텍스트 정제 및 구분용 특수 태그"""
+    SPACE = " "        # 기본 공백
+    SPLIT = "[SPLIT]"  # 데이터 분리용 임시 태그
 
 
 class Patterns:
-    """텍스트 탐색용 정규식 패턴"""
-
+    """텍스트 탐색 및 정제용 정규식"""
+    # 문서 헤더(결정문 여부) 감지
     HEADER_MAIN = r"법[^가-힣a-zA-Z0-9]{0,10}원"
     HEADER_SUB = r"결[^가-힣a-zA-Z0-9]{0,10}정"
 
-    # 특수문자 정제
-    CLEAN_TEXT_DISALLOWED = r"[^가-힣a-zA-Z0-9\(\)\-\[\]\<\>\!@#\$%\^&\*\s]"
+    # 유효하지 않은 특수문자 제거 패턴
+    CLEAN_TEXT = r"[^가-힣a-zA-Z0-9\(\)\-\[\]\<\>\!@#\$%\^&\*\s]"
 
-    # 목록 번호 분리 (예: 1., 2))
-    LIST_ITEM_SPLIT = rf"(?:^|{re.escape(Tags.SPACE)})(\d{{1,2}}[\.\)]|\d{{1,2}}(?={re.escape(Tags.SPACE)})|\d{{1,2}}(?=[가-힣]))"
+    # 목록 번호 패턴 (예: 1., 2) 등)
+    LIST_ITEM = rf"(?:^|{re.escape(TextTag.SPACE)})(\d{{1,2}}[\.\)]|\d{{1,2}}(?={re.escape(TextTag.SPACE)})|\d{{1,2}}(?=[가-힣]))"
 
-    # 하단 정보 감지 (날짜 등)
-    TERMINATOR_DATE = r"20\d{2}\.\s*\d{1,2}\.\s*\d{1,2}"
+    # 문서 끝단 정보(날짜 등) 감지
+    DATE_TERMINATOR = r"20\d{2}\.\s*\d{1,2}\.\s*\d{1,2}"
 
 
+# --- 알고리즘 파라미터 ---
 class Thresholds:
-    """알고리즘 임계값"""
+    """텍스트 병합 및 매칭 임계값"""
+    LINE_MERGE_Y_DIFF = 15     # 같은 행으로 판단할 Y축 오차 (px)
+    SECTION_GAP_LIMIT = 100    # 다음 섹션으로 넘어가기 전 최대 간격 (px)
+    FUZZY_MATCH_RATIO = 0.7    # 키워드 유사도 매칭 기준 (0~1)
 
-    LINE_MERGE_Y_DIFF = 15  # 행 병합 Y축 오차
-    SECTION_GAP_LIMIT = 100  # 섹션 종료 간격
-    KEYWORD_MATCH_RATIO = 0.7  # 유사도 매칭 기준
+    # 이미지 전처리 (이진화 및 노이즈 제거)
+    IMG_ADAPTIVE_BLOCK = 25    # 적응형 이진화 블록 크기
+    IMG_ADAPTIVE_C = 15        # 적응형 이진화 차감 상수
+    IMG_MORPH_KERNEL = (2, 1)  # 모폴로지 연산 커널 크기
+
+    # 문서 분석 탐색 범위
+    HEADER_SEARCH_LIMIT = 10   # 문서 상단에서 헤더를 찾을 최대 행 수
+    ORG_SEARCH_LIMIT = 5       # 법원명 탐색 범위
+    SUB_HEADER_OFFSET = 4      # 법원명 발견 후 결정문 제목을 찾을 범위

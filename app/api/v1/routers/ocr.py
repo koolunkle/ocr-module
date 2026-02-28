@@ -1,5 +1,5 @@
 """
-OCR 처리 엔드포인트 정의
+OCR 처리 API 엔드포인트 정의
 """
 
 import json
@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 def parse_target_pages(pages_str: Optional[str]) -> Optional[List[int]]:
-    """페이지 번호 파싱 (예: '1,2,3' -> [1, 2, 3])"""
+    """콤마로 구분된 페이지 번호 문자열을 리스트로 변환 (예: '1,2' -> [1, 2])"""
     if not pages_str:
         return None
     try:
@@ -35,17 +35,18 @@ def parse_target_pages(pages_str: Optional[str]) -> Optional[List[int]]:
 async def process_ocr(
     image_data: Tuple[Image.Image, str] = Depends(validate_image_file),
     pages: Optional[str] = Form(
-        None, description="처리할 페이지 (예: 1,3,5 / 공백 시 전체)", examples=["1,3,5"]
+        None, description="처리할 페이지 번호 (예: 1,3 / 비워두면 전체 처리)", examples=["1,3,5"]
     ),
 ):
-    """문서 이미지 분석 (일괄 응답)"""
+    """이미지 분석 및 결과 일괄 응답"""
     image, filename = image_data
     target_pages = parse_target_pages(pages)
 
     try:
+        # OCR 수행 및 결과 반환
         return ocr_service.process_image(image, filename, target_pages)
     except Exception as e:
-        logger.error(f"처리 중 오류 발생: {e}")
+        logger.error(f"OCR 처리 중 오류: {e}")
         raise HTTPException(status_code=500, detail="서버 내부 처리 오류")
 
 
@@ -53,7 +54,7 @@ async def process_ocr(
     "/stream",
     responses={
         200: {
-            "description": "문서 이미지 분석 (SSE 스트리밍 응답). 각 'data:' 필드에 PageResult 객체가 JSON 형태로 포함됩니다.",
+            "description": "SSE(Server-Sent Events) 스트리밍 응답. 각 페이지 분석 완료 시 데이터를 전송합니다.",
             "content": {
                 "text/event-stream": {
                     "example": 'data: {"page_num": 1, "type": "raw", "data": {...}}\n\n'
@@ -65,22 +66,23 @@ async def process_ocr(
 async def process_ocr_stream(
     image_data: Tuple[Image.Image, str] = Depends(validate_image_file),
     pages: Optional[str] = Form(
-        None, description="처리할 페이지 (예: 1,3,5 / 공백 시 전체)", examples=["1,3,5"]
+        None, description="처리할 페이지 번호 (예: 1,3 / 비워두면 전체 처리)", examples=["1,3,5"]
     ),
 ):
-    """문서 이미지 분석 (SSE 스트리밍 응답)"""
+    """이미지 분석 및 결과 스트리밍 응답 (SSE)"""
     image, filename = image_data
     target_pages = parse_target_pages(pages)
 
     try:
-
         def iter_file():
+            # 페이지별 분석 결과를 즉시 전송
             for result in ocr_service.process_image_generator(
                 image, filename, target_pages
             ):
+                # JSON 데이터를 SSE 포맷(data: ...)으로 변환
                 yield f"data: {json.dumps(result.model_dump(by_alias=True), ensure_ascii=False)}\n\n"
 
         return StreamingResponse(iter_file(), media_type="text/event-stream")
     except Exception as e:
-        logger.error(f"스트리밍 처리 중 오류 발생: {e}")
+        logger.error(f"스트리밍 처리 중 오류: {e}")
         raise HTTPException(status_code=500, detail="서버 내부 스트리밍 오류")

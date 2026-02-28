@@ -2,7 +2,7 @@
 API 통신을 위한 데이터 스키마 정의
 """
 
-from typing import List, Dict, Union, Any, Optional
+from typing import List, Union, Optional
 from pydantic import BaseModel, Field
 from app.core.constants import PageType
 

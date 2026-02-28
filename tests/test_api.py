@@ -1,5 +1,4 @@
 import io
-import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 from app.main import app
@@ -62,7 +61,7 @@ def test_ocr_stream_success():
     img_file = create_dummy_image("png")
     files = {"file": ("test.png", img_file, "image/png")}
 
-    # stream=True를 사용하여 응답을 순차적으로 받음
+    # stream을 사용하여 응답을 순차적으로 받음
     with client.stream("POST", "/api/v1/ocr/stream", files=files) as response:
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"

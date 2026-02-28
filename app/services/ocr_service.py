@@ -1,8 +1,7 @@
 """
-OCR 엔진 관리 및 이미지 처리 서비스
+OCR 엔진 구동 및 이미지/문서 처리 서비스
 """
 
-import os
 import logging
 import concurrent.futures
 from typing import Any, Dict, Generator, Optional, List, Tuple
@@ -21,19 +20,19 @@ logger = logging.getLogger(__name__)
 
 
 class OCRService:
-    """RapidOCR을 사용하여 이미지에서 텍스트를 추출하고 구조화합니다."""
+    """RapidOCR 엔진을 사용한 이미지 텍스트 추출 및 구조화"""
 
     def __init__(self):
         self._engine: Any = None
-        # 전역적으로 사용할 스레드 풀 생성
+        # 병렬 처리를 위한 스레드 풀
         self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=os.cpu_count() or 4, thread_name_prefix="OCRWorker"
+            max_workers=settings.OCR_MAX_WORKERS, thread_name_prefix="OCRWorker"
         )
 
     def initialize(self):
-        """엔진 초기화 및 모델 로드"""
+        """엔진 설정 로드 및 초기화"""
         if self._engine is None:
-            logger.info("OCR 엔진 초기화 중...")
+            logger.info("OCR 엔진 초기화 시작...")
             try:
                 self._engine = RapidOCR(
                     params={
@@ -54,25 +53,28 @@ class OCRService:
                 raise e
 
     def shutdown(self):
-        """리소스 정리 및 스레드 풀 종료"""
-        logger.info("OCR 서비스 스레드 풀 종료 중...")
+        """스레드 풀 리소스 정리"""
+        logger.info("OCR 서비스 종료 및 스레드 풀 정리...")
         self._executor.shutdown(wait=True)
 
     @property
     def engine(self):
+        """엔진 인스턴스 지연 로딩"""
         if self._engine is None:
             self.initialize()
         return self._engine
 
     def _process_single_page(self, args: Tuple[Image.Image, int]) -> PageResult:
-        """단일 페이지 OCR 및 파싱 처리"""
+        """단일 페이지에 대한 OCR 및 데이터 분석 수행"""
         page_img, page_num = args
         try:
+            # PIL 이미지를 OpenCV(BGR) 포맷으로 변환
             img_bgr = cv2.cvtColor(np.array(page_img.convert("RGB")), cv2.COLOR_RGB2BGR)
             result = self.engine(img_bgr)
 
             raw_txts, raw_boxes = [], []
             if result:
+                # 결과 포맷 대응 
                 if hasattr(result, "txts"):
                     raw_txts = list(result.txts)
                     raw_boxes = [
@@ -84,7 +86,7 @@ class OCRService:
                         raw_boxes.append([int(v) for sub in item[0] for v in sub])
                         raw_txts.append(str(item[1]))
 
-            # 구조화 분석 시도
+            # 1. 구조화 분석 시도 (사건 등 추출)
             structured_data = parser_service.parse(raw_boxes, raw_txts)
 
             if structured_data:
@@ -92,11 +94,11 @@ class OCRService:
                     page_num=page_num, type=PageType.STRUCTURED, data=structured_data
                 )
 
-            # Raw 데이터 포맷팅 (x, y, w, h 형식)
+            # 2. 구조화 실패 시 일반 텍스트 데이터(Raw) 반환
             content_items = []
             for i in range(len(raw_txts)):
                 box = raw_boxes[i]
-                # box: [x1, y1, x2, y2, x3, y3, x4, y4] 또는 [x_min, y_min, x_max, y_max]
+                # 좌표 포맷 정규화 [x, y, w, h]
                 if len(box) == 8:
                     x_min = min(box[0], box[2], box[4], box[6])
                     y_min = min(box[1], box[3], box[5], box[7])
@@ -137,7 +139,7 @@ class OCRService:
         filename: str,
         target_pages: Optional[List[int]] = None,
     ) -> Generator[PageResult, None, None]:
-        """스트리밍 처리를 위한 제너레이터"""
+        """페이지별 순차 처리를 위한 제너레이터 (스트리밍 응답용)"""
         for i, page_img in enumerate(ImageSequence.Iterator(image)):
             p_num = i + 1
             if target_pages and p_num not in target_pages:
@@ -150,7 +152,7 @@ class OCRService:
         filename: str,
         target_pages: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
-        """병렬 처리를 이용한 일괄 OCR 수행"""
+        """병렬 처리를 이용한 이미지 전체 일괄 처리"""
         tasks = []
         for i, page_img in enumerate(ImageSequence.Iterator(image)):
             p_num = i + 1
@@ -161,7 +163,7 @@ class OCRService:
         if not tasks:
             return {"filename": filename, "pages": []}
 
-        # [수정] with 문을 제거하여 스레드 풀이 종료되지 않게 함
+        # 스레드 풀을 이용한 병렬 실행
         results = list(self._executor.map(self._process_single_page, tasks))
 
         results.sort(key=lambda x: x.page_num)
