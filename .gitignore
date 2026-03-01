@@ -32,5 +32,8 @@ temp/
 .DS_Store
 Thumbs.db
 
+# 분석 시각화 결과물
+vis/
+
 # 대용량 모델 파일 (필요 시 주석 해제)
 models/*.onnx

@@ -3,7 +3,7 @@ API 통신을 위한 데이터 스키마 정의
 """
 
 from typing import List, Union, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 from app.core.constants import PageType
 
 
@@ -23,23 +23,34 @@ class OCRContent(BaseModel):
     box: OCRBox = Field(..., description="텍스트 좌표 (x, y, w, h)")
 
 
-class RawPageData(BaseModel):
-    """원본 추출 데이터"""
+class LayoutRegion(BaseModel):
+    """문서 내 개별 영역 정보 (텍스트, 제목, 표 등)"""
 
-    content: List[OCRContent] = Field(
-        ..., description="추출된 텍스트 및 좌표 정보 리스트"
+    type: str = Field(..., description="영역 타입 (text, title, table 등)", examples=["text"])
+    score: float = Field(..., description="분류 신뢰도", examples=[0.9791])
+    rect: OCRBox = Field(..., description="영역 전체 좌표 (x, y, w, h)")
+    lines: List[str] = Field(default_factory=list, description="해당 영역에 포함된 텍스트 라인들")
+
+
+class RawPageData(RootModel):
+    """원본 추출 데이터 (리스트 직접 반환)
+    레이아웃 분석 성공 시 List[LayoutRegion], 실패 시 List[OCRContent]를 반환
+    """
+
+    root: Union[List[LayoutRegion], List[OCRContent]] = Field(
+        ..., description="추출된 텍스트 및 레이아웃 영역 정보 목록"
     )
 
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "content": [
-                    {
-                        "text": "음성출력용바코드",
-                        "box": {"x": 2168, "y": 344, "w": 170, "h": 30},
-                    }
-                ]
-            }
+            "example": [
+                {
+                    "type": "text",
+                    "score": 0.9791,
+                    "rect": {"x": 404, "y": 2222, "w": 1835, "h": 383},
+                    "lines": ["텍스트 라인 1", "텍스트 라인 2"]
+                }
+            ]
         }
     }
 
@@ -104,7 +115,7 @@ class PageResult(BaseModel):
     """페이지별 처리 결과"""
 
     page_num: int = Field(..., description="페이지 번호")
-    type: PageType = Field(..., description="데이터 유형")
+    type: PageType = Field(..., description="데이터 유형 (raw, structured, error)")
     data: Union[StructuredPageData, RawPageData, ErrorPageData] = Field(
         ..., description="상세 데이터"
     )
@@ -129,20 +140,19 @@ class OCRResponse(BaseModel):
                             "사건": "2023타채12345",
                             "채권자": "홍길동",
                             "채무자": "김철수",
-                            "청구금액": "금 10,000,000원",
                         },
                     },
                     {
                         "page_num": 2,
                         "type": "raw",
-                        "data": {
-                            "content": [
-                                {
-                                    "text": "음성출력용바코드",
-                                    "box": {"x": 2168, "y": 344, "w": 170, "h": 30},
-                                }
-                            ]
-                        },
+                        "data": [
+                            {
+                                "type": "text",
+                                "score": 0.9791,
+                                "rect": {"x": 404, "y": 2222, "w": 1835, "h": 383},
+                                "lines": ["텍스트 라인 1"]
+                            }
+                        ],
                     },
                 ],
             }

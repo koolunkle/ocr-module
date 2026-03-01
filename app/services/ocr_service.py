@@ -1,10 +1,11 @@
 """
-OCR 엔진 구동 및 이미지/문서 처리 서비스
+OCR 및 문서 분석 통합 서비스
 """
 
 import logging
+import asyncio
 import concurrent.futures
-from typing import Any, Dict, Generator, Optional, List, Tuple
+from typing import Any, Dict, Generator, Optional, List, Tuple, Sequence
 
 import cv2
 import numpy as np
@@ -12,27 +13,26 @@ from PIL import Image, ImageSequence
 from rapidocr import RapidOCR
 
 from app.core.config import settings
-from app.core.constants import PageType
-from app.schemas.ocr import PageResult, RawPageData, ErrorPageData
+from app.core.constants import PageType, FieldKey
+from app.schemas.ocr import PageResult, RawPageData, ErrorPageData, OCRContent, OCRBox
 from app.services.parser_service import parser_service
+from app.services.layout_service import layout_service
 
 logger = logging.getLogger(__name__)
 
 
 class OCRService:
-    """RapidOCR 엔진을 사용한 이미지 텍스트 추출 및 구조화"""
+    """RapidOCR/Layout 엔진을 활용한 문서 처리 파이프라인"""
 
     def __init__(self):
-        self._engine: Any = None
-        # 병렬 처리를 위한 스레드 풀
+        self._engine: Optional[RapidOCR] = None
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=settings.OCR_MAX_WORKERS, thread_name_prefix="OCRWorker"
         )
 
     def initialize(self):
-        """엔진 설정 로드 및 초기화"""
+        """AI 엔진 초기화"""
         if self._engine is None:
-            logger.info("OCR 엔진 초기화 시작...")
             try:
                 self._engine = RapidOCR(
                     params={
@@ -47,127 +47,140 @@ class OCRService:
                         "Det.limit_side_len": settings.OCR_DET_LIMIT_SIDE_LEN,
                     }
                 )
-                logger.info("OCR 엔진 초기화 완료")
+                layout_service.initialize()
+                logger.info("OCR/Layout 엔진 로드 완료")
             except Exception as e:
-                logger.error(f"OCR 엔진 초기화 실패: {e}")
+                logger.error(f"엔진 초기화 실패: {e}")
                 raise e
 
     def shutdown(self):
-        """스레드 풀 리소스 정리"""
-        logger.info("OCR 서비스 종료 및 스레드 풀 정리...")
+        """리소스 해제"""
         self._executor.shutdown(wait=True)
 
     @property
-    def engine(self):
-        """엔진 인스턴스 지연 로딩"""
+    def engine(self) -> RapidOCR:
         if self._engine is None:
             self.initialize()
+        if self._engine is None:
+            raise RuntimeError("엔진 연결 실패")
         return self._engine
 
-    def _process_single_page(self, args: Tuple[Image.Image, int]) -> PageResult:
-        """단일 페이지에 대한 OCR 및 데이터 분석 수행"""
-        page_img, page_num = args
+    def _process_single_page(self, args: Tuple[Image.Image, int, Optional[str]]) -> PageResult:
+        """페이지 분석 파이프라인 (Layout -> OCR -> Merge)"""
+        page_img, page_num, filename = args
         try:
-            # PIL 이미지를 OpenCV(BGR) 포맷으로 변환
+            # 이미지 변환
             img_bgr = cv2.cvtColor(np.array(page_img.convert("RGB")), cv2.COLOR_RGB2BGR)
-            result = self.engine(img_bgr)
+            
+            # 1. 레이아웃 추론 (구조 파악)
+            layout_out = layout_service.infer(img_bgr, page_num)
+            
+            # 2. OCR 수행 (텍스트 인식)
+            ocr_out = self.engine(img_bgr)
+            txts, boxes = self._parse_ocr_result(ocr_out)
 
-            raw_txts, raw_boxes = [], []
-            if result:
-                # 결과 포맷 대응 
-                if hasattr(result, "txts"):
-                    raw_txts = list(result.txts)
-                    raw_boxes = [
-                        [int(v) for sub in b.tolist() for v in sub]
-                        for b in result.boxes
-                    ]
-                elif isinstance(result, list) and result[0]:
-                    for item in result[0]:
-                        raw_boxes.append([int(v) for sub in item[0] for v in sub])
-                        raw_txts.append(str(item[1]))
-
-            # 1. 구조화 분석 시도 (사건 등 추출)
-            structured_data = parser_service.parse(raw_boxes, raw_txts)
-
-            if structured_data:
-                return PageResult(
-                    page_num=page_num, type=PageType.STRUCTURED, data=structured_data
-                )
-
-            # 2. 구조화 실패 시 일반 텍스트 데이터(Raw) 반환
-            content_items = []
-            for i in range(len(raw_txts)):
-                box = raw_boxes[i]
-                # 좌표 포맷 정규화 [x, y, w, h]
-                if len(box) == 8:
-                    x_min = min(box[0], box[2], box[4], box[6])
-                    y_min = min(box[1], box[3], box[5], box[7])
-                    x_max = max(box[0], box[2], box[4], box[6])
-                    y_max = max(box[1], box[3], box[5], box[7])
-                else:
-                    x_min, y_min, x_max, y_max = box[0], box[1], box[2], box[3]
-
-                content_items.append(
-                    {
-                        "text": raw_txts[i],
-                        "box": {
-                            "x": x_min,
-                            "y": y_min,
-                            "w": x_max - x_min,
-                            "h": y_max - y_min,
-                        },
-                    }
-                )
-
-            return PageResult(
-                page_num=page_num,
-                type=PageType.RAW,
-                data=RawPageData(content=content_items),
+            # 3. 레이아웃 매핑 및 시각화 저장
+            layout_regions = layout_service.analyze_and_save(
+                img_bgr, boxes, txts, filename=filename, page_num=page_num, layout_out=layout_out
             )
+
+            # 4. 결과 우선순위 결정 (Structured -> Layout-Raw -> Box-Raw)
+            # 비즈니스 데이터 추출 시도
+            structured = parser_service.parse(boxes, txts)
+            if structured:
+                return PageResult(page_num=page_num, type=PageType.STRUCTURED, data=structured)
+
+            # 레이아웃 기반 결과 반환
+            if layout_regions:
+                return PageResult(page_num=page_num, type=PageType.RAW, data=RawPageData(layout_regions))
+
+            # 폴백: 단순 텍스트 박스 나열
+            return PageResult(page_num=page_num, type=PageType.RAW, data=self._get_box_fallback(txts, boxes))
 
         except Exception as e:
-            logger.error(f"{page_num}페이지 처리 실패: {e}")
-            return PageResult(
-                page_num=page_num,
-                type=PageType.ERROR,
-                data=ErrorPageData(message=str(e)),
-            )
+            logger.error(f"P{page_num} 처리 오류: {e}")
+            return PageResult(page_num=page_num, type=PageType.ERROR, data=ErrorPageData(message=str(e)))
 
-    def process_image_generator(
-        self,
-        image: Image.Image,
-        filename: str,
-        target_pages: Optional[List[int]] = None,
-    ) -> Generator[PageResult, None, None]:
-        """페이지별 순차 처리를 위한 제너레이터 (스트리밍 응답용)"""
-        for i, page_img in enumerate(ImageSequence.Iterator(image)):
-            p_num = i + 1
-            if target_pages and p_num not in target_pages:
-                continue
-            yield self._process_single_page((page_img, p_num))
+    def _parse_ocr_result(self, result: Any) -> Tuple[List[str], List[List[int]]]:
+        """OCR 결과 정규화"""
+        if not result:
+            return [], []
+        
+        # 속성 존재 여부 확인 
+        txts_attr = getattr(result, "txts", None)
+        boxes_attr = getattr(result, "boxes", None)
 
-    def process_image(
-        self,
-        image: Image.Image,
-        filename: str,
-        target_pages: Optional[List[int]] = None,
+        if txts_attr is not None and boxes_attr is not None:
+            return list(txts_attr), [[int(v) for sub in b.tolist() for v in sub] for b in boxes_attr]
+        
+        items = result[0] if isinstance(result, list) and result and result[0] else []
+        txts, boxes = [], []
+        for item in items:
+            boxes.append([int(v) for sub in item[0] for v in sub])
+            txts.append(str(item[1]))
+        return txts, boxes
+
+    def _get_box_fallback(self, txts: List[str], boxes: List[List[int]]) -> RawPageData:
+        """단순 텍스트 목록 생성"""
+        content = []
+        for t, b in zip(txts, boxes):
+            x_coords, y_coords = b[0::2], b[1::2]
+            xmin, ymin = min(x_coords), min(y_coords)
+            content.append(OCRContent(
+                text=t,
+                box=OCRBox(x=xmin, y=ymin, w=max(x_coords) - xmin, h=max(y_coords) - ymin)
+            ))
+        return RawPageData(content)
+
+    async def process_image_async(
+        self, image: Image.Image, filename: str, target_pages: Optional[Sequence[int]] = None
     ) -> Dict[str, Any]:
-        """병렬 처리를 이용한 이미지 전체 일괄 처리"""
-        tasks = []
-        for i, page_img in enumerate(ImageSequence.Iterator(image)):
-            p_num = i + 1
-            if target_pages and p_num not in target_pages:
-                continue
-            tasks.append((page_img.copy(), p_num))
+        """비동기 병렬 처리"""
+        layout_service.clear_debug_directory(filename)
+        
+        loop = asyncio.get_running_loop()
+        tasks = [
+            loop.run_in_executor(self._executor, self._process_single_page, (page.copy(), i + 1, filename))
+            for i, page in enumerate(ImageSequence.Iterator(image))
+            if not target_pages or (i + 1) in target_pages
+        ]
 
         if not tasks:
             return {"filename": filename, "pages": []}
 
-        # 스레드 풀을 이용한 병렬 실행
-        results = list(self._executor.map(self._process_single_page, tasks))
+        results = await asyncio.gather(*tasks)
+        return {"filename": filename, "pages": sorted(results, key=lambda x: x.page_num)}
 
-        results.sort(key=lambda x: x.page_num)
-        return {"filename": filename, "pages": results}
+    def process_image_generator(
+        self, image: Image.Image, filename: str, target_pages: Optional[Sequence[int]] = None
+    ) -> Generator[PageResult, None, None]:
+        """스트리밍 처리"""
+        layout_service.clear_debug_directory(filename)
+        for i, page in enumerate(ImageSequence.Iterator(image)):
+            p_num = i + 1
+            if target_pages and p_num not in target_pages:
+                continue
+            yield self._process_single_page((page, p_num, filename))
+
+    def process_image(self, *args, **kwargs) -> Dict[str, Any]:
+        """동기 인터페이스 (FastAPI 대응)"""
+        img, fname = args[0], args[1]
+        layout_service.clear_debug_directory(fname)
+        
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                t_pages = args[2] if len(args) > 2 else None
+                tasks = [
+                    (page.copy(), i + 1, fname)
+                    for i, page in enumerate(ImageSequence.Iterator(img))
+                    if not t_pages or (i + 1) in t_pages
+                ]
+                results = list(self._executor.map(self._process_single_page, tasks))
+                return {"filename": fname, "pages": sorted(results, key=lambda x: x.page_num)}
+        except RuntimeError:
+            pass
+        return asyncio.run(self.process_image_async(*args, **kwargs))
 
 
 ocr_service = OCRService()

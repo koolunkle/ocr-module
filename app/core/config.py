@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     )
     KEYS_PATH: str = Field(default=str(MODELS_DIR / "korean_dict.txt"))
 
+    # 레이아웃 분석 모델 설정
+    LAYOUT_MODEL_PATH: str = Field(default=str(MODELS_DIR / "layout_cdla.onnx"))
+    LAYOUT_DICT_PATH: str = Field(default=str(MODELS_DIR / "layout_dict.txt"))
+    LAYOUT_SCORE_THRESHOLD: float = 0.5
+
     # OCR 엔진 파라미터
     OCR_DET_LIMIT_SIDE_LEN: int = 960
     OCR_DET_DB_THRESH: float = 0.3
@@ -35,8 +40,9 @@ class Settings(BaseSettings):
     OCR_DET_UNCLIP_RATIO: float = 1.6
     USE_CLS: bool = False
 
-    # 병렬 처리 설정
+    # 시스템 운영 설정
     OCR_MAX_WORKERS: int = Field(default=os.cpu_count() or 4)
+    DEBUG: bool = Field(default=True, description="디버그 모드 (시각화 이미지 저장 등)")
 
     # 환경 변수 파일 (.env) 설정
     model_config = SettingsConfigDict(
