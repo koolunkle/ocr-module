@@ -94,9 +94,8 @@ class OCRProcessor:
     ) -> PageResult:
         """단일 페이지 분석: Layout과 OCR을 병렬로 실행하여 속도 최적화"""
         try:
-            # OpenCV 형식으로 변환
-            img_rgb = page_img.convert("RGB")
-            img_bgr = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2BGR)
+            # OpenCV 형식으로 변환 
+            img_bgr = cv2.cvtColor(np.asarray(page_img.convert("RGB")), cv2.COLOR_RGB2BGR)
 
             # 미리 생성된 내부 스레드 풀을 사용하여 병렬 추론 실행
             f_layout = self._inner_executor.submit(layout_service.infer, img_bgr)
@@ -109,17 +108,17 @@ class OCRProcessor:
             ocr_out = ocr_raw[0] if isinstance(ocr_raw, tuple) else ocr_raw
             txts, boxes = self._normalize_ocr_result(ocr_out)
 
-            # 레이아웃 매핑 및 시각화 이미지 생성
+            # 1. 구조화 데이터 파싱 시도 
+            structured = parser_service.parse(boxes, txts)
+            if structured:
+                # 성공 시 시각화 및 매핑을 생략하여 속도 향상 
+                return PageResult(page_num=page_num, type=PageType.STRUCTURED, data=structured)
+
+            # 2. 구조화 실패 시에만 레이아웃 매핑 및 시각화 이미지 생성
             layout_regions = layout_service.analyze_and_save(
                 img_bgr, boxes, txts, filename=filename, page_num=page_num, layout_out=layout_out
             )
 
-            # 구조화 데이터 파싱 시도
-            structured = parser_service.parse(boxes, txts)
-            if structured:
-                return PageResult(page_num=page_num, type=PageType.STRUCTURED, data=structured)
-
-            # 구조화 실패 시 레이아웃 정보 반환
             if layout_regions:
                 return PageResult(page_num=page_num, type=PageType.RAW, data=RawPageData(layout_regions))
 
