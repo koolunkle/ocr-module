@@ -20,7 +20,7 @@ def test_read_root():
     """서버 기동 확인 테스트"""
     response = client.get("/")
     assert response.status_code == 200
-    assert "RapidOCR API Service" in response.json()["message"]
+    assert "RapidOCR API Service" in response.json()["service"]
 
 
 def test_ocr_invalid_file_type():
@@ -28,7 +28,7 @@ def test_ocr_invalid_file_type():
     files = {"file": ("test.txt", b"hello world", "text/plain")}
     response = client.post("/api/v1/ocr/", files=files)
     assert response.status_code == 400
-    assert "지원하지 않는 확장자" in response.json()["detail"]
+    assert "지원하지 않는 파일 형식" in response.json()["detail"]
 
 
 def test_ocr_process_success():
