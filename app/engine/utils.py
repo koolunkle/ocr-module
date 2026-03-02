@@ -59,8 +59,23 @@ def merge_boxes_into_lines(
     def _flush_line(current_items: List[Dict[str, Any]]):
         """수집된 행 내부 아이템들을 X축 순서로 정렬하여 하나의 문자열로 결합"""
         current_items.sort(key=lambda x: x[FieldKey.X_MIN])
+
+        # 박스 간 가로 간격이 일정 기준 이하일 경우 공백 없이 병합하여 오인식 방지
+        merged_text = ""
+        for i, item in enumerate(current_items):
+            if i == 0:
+                merged_text = str(item[FieldKey.TEXT])
+            else:
+                prev_item = current_items[i-1]
+                gap = item[FieldKey.X_MIN] - prev_item[FieldKey.X_MAX]
+                line_h = item[FieldKey.Y_MAX] - item[FieldKey.Y_MIN]
+                if gap < (line_h * 0.5):
+                    merged_text += str(item[FieldKey.TEXT])
+                else:
+                    merged_text += TextTag.SPACE.value + str(item[FieldKey.TEXT])
+
         lines.append({
-            FieldKey.TEXT: " ".join(str(d[FieldKey.TEXT]) for d in current_items),
+            FieldKey.TEXT: merged_text,
             FieldKey.Y_MIN: min(d[FieldKey.Y_MIN] for d in current_items),
             FieldKey.Y_MAX: max(d[FieldKey.Y_MAX] for d in current_items),
             FieldKey.Y_CENTER: sum(d[FieldKey.Y_CENTER] for d in current_items) / len(current_items),

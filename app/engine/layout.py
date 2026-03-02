@@ -23,7 +23,7 @@ from app.constants import (
     Thresholds,
 )
 from app.schemas import LayoutRegion, OCRBox
-from app.engine.utils import merge_boxes_into_lines
+from app.engine.utils import merge_boxes_into_lines, sanitize_ocr_text
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +202,7 @@ class LayoutService:
         merged = merge_boxes_into_lines(
             [i["box"] for i in matched_ocr], [i["text"] for i in matched_ocr]
         )
-        lines = [str(line[FieldKey.TEXT]) for line in merged]
+        lines = [sanitize_ocr_text(str(line[FieldKey.TEXT])) for line in merged]
 
         return OCRBox(x=f_xmin, y=f_ymin, w=f_xmax - f_xmin, h=f_ymax - f_ymin), lines
 

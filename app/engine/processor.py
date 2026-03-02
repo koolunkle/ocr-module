@@ -24,6 +24,7 @@ from app.schemas import (
 )
 from app.engine.layout import layout_service
 from app.engine.parser import parser_service
+from app.engine.utils import sanitize_ocr_text
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,7 @@ class OCRProcessor:
             x_coords, y_coords = b[0::2], b[1::2]
             xmin, ymin = min(x_coords), min(y_coords)
             content.append(OCRContent(
-                text=t,
+                text=sanitize_ocr_text(t),
                 box=OCRBox(x=xmin, y=ymin, w=max(x_coords) - xmin, h=max(y_coords) - ymin)
             ))
         return RawPageData(content)
